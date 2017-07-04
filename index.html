@@ -1,0 +1,223 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <style>
+        body{
+            padding:0;
+            margin: 0;
+            overflow:hidden;
+        }
+    </style>
+    <script src="node_modules/three/build/three.js"></script>
+    <script src="node_modules/three/examples/js/controls/OrbitControls.js"></script>
+    <script src="obj/cloth.js"></script>
+    <script src="lib/Mirror.js"></script>
+    <script src="lib/WaterShader.js"></script>
+</head>
+<body>
+    <div id="container"></div>
+    <script>
+        var camera,scene,renderer;
+        var controls;
+        var object , clothGeomtry;
+        var water;
+
+        //初始化参数函数
+        function init(){
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(30,window.innerWidth/window.innerHeight,1,1000000);
+            camera.position.set(0,0,1500);
+            renderer = new THREE.WebGLRenderer({antialias : true});
+            renderer.setSize(window.innerWidth,window.innerHeight);
+            renderer.setClearColor(0xffffff);
+            renderer.shadowMap.enabled = true;
+
+            //环境光
+            scene.add( new THREE.AmbientLight(0x666666));
+
+            //平行光
+            var light = new THREE.DirectionalLight(0xdfebff , 1.75);
+            light.position.set(50, 200 , 100);
+            light.castShadow = true;
+            light.shadow.height = 1024;
+            light.shadow.width = 1024;
+            var d = 300;
+            light.shadow.camera.left = -d;
+            light.shadow.camera.right = d;
+            light.shadow.camera.top = d;
+            light.shadow.camera.bottom = -d;
+            light.shadow.camera.far = 1000;
+            scene.add(light);
+
+
+            controls = new THREE.OrbitControls(camera , renderer.domElement);
+            controls.enablePan = false;
+            controls.minDistance = 1000.0;
+            controls.maxDistance = 5000.0;
+            controls.maxPolarAngle = Math.PI * 0.495;
+            controls.target.set( 0, 0, 0 );
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            //衣服模型
+            var loader = new THREE.TextureLoader();
+            var texture = loader.load('texture/1.jpg');
+            clothGeomtry = new THREE.ParametricGeometry( clothFunction , cloth.w , cloth.h);
+            clothGeomtry.dynamic = true;
+            var material = new THREE.MeshPhongMaterial({
+                    map : texture,
+                    side: THREE.DoubleSide,
+                }
+            )
+            object = new THREE.Mesh(clothGeomtry , material);
+            object.castShadow = true;
+            scene.add(object);
+
+
+
+            //添加地板
+//            texture = loader.load('texture/grasslight-big.jpg');
+//            texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+//            texture.repeat.set(25 , 25);
+//            material = new THREE.MeshPhongMaterial({
+//                map : texture,
+//            });
+//            var mesh = new THREE.Mesh(
+//                new THREE.PlaneBufferGeometry(20000,20000),
+//                material
+//            );
+//            mesh.position.y = - 450;
+//            mesh.rotation.x = - Math.PI/2;
+//            mesh.receiveShadow = true;
+//            scene.add(mesh);
+            var waterNormals = new THREE.TextureLoader().load( 'texture/waternormals.jpg' );
+            waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+
+            water = new THREE.Water( renderer, camera, scene, {
+                textureWidth: 4096,
+                textureHeight: 4096,
+                waterNormals: waterNormals,
+                alpha: 	0.8,
+                sunDirection: light.position.clone().normalize(),
+                sunColor: 0xffffff,
+                waterColor: 0x001e0f,
+                distortionScale: 5.0
+            } );
+
+
+            var mirrorMesh = new THREE.Mesh(
+                new THREE.PlaneBufferGeometry( 2000*500 , 2000*500 ),
+                water.material
+            );
+
+            mirrorMesh.add( water );
+            mirrorMesh.position.y = - 450;
+            mirrorMesh.rotation.x = - Math.PI * 0.5;
+            scene.add( mirrorMesh );
+
+            var cubeMap = new THREE.CubeTexture( [] );
+            cubeMap.format = THREE.RGBFormat;
+            var loaderImage = new THREE.ImageLoader();
+            loaderImage.load( 'texture/skybox/skyboxsun25degtest.png', function ( image ) {
+                var getSide = function ( x, y ) {
+
+                    var size = 1024;
+
+                    var canvas = document.createElement( 'canvas' );
+                    canvas.width = size;
+                    canvas.height = size;
+
+                    var context = canvas.getContext( '2d' );
+                    context.drawImage( image, - x * size, - y * size );
+
+                    return canvas;
+
+                };
+
+                cubeMap.images[ 0 ] = getSide( 2, 1 ); // px
+                cubeMap.images[ 1 ] = getSide( 0, 1 ); // nx
+                cubeMap.images[ 2 ] = getSide( 1, 0 ); // py
+                cubeMap.images[ 3 ] = getSide( 1, 2 ); // ny
+                cubeMap.images[ 4 ] = getSide( 1, 1 ); // pz
+                cubeMap.images[ 5 ] = getSide( 3, 1 ); // nz
+                cubeMap.needsUpdate = true;
+
+            } );
+
+            var cubeShader = THREE.ShaderLib[ 'cube' ];
+            cubeShader.uniforms[ 'tCube' ].value = cubeMap;
+
+            var skyBoxMaterial = new THREE.ShaderMaterial( {
+                fragmentShader: cubeShader.fragmentShader,
+                vertexShader: cubeShader.vertexShader,
+                uniforms: cubeShader.uniforms,
+                depthWrite: false,
+                side: THREE.BackSide
+            } );
+
+            var skyBox = new THREE.Mesh(
+                new THREE.BoxGeometry( 1000000, 1000000, 1000000 ),
+                skyBoxMaterial
+            );
+
+            scene.add( skyBox );
+
+            animate();
+        }
+
+        //渲染函数
+        var windForce = new THREE.Vector3(0 , 0 , 0);
+        function animate(){
+            requestAnimationFrame(animate);
+
+            var time = Date.now();
+            var windStrength = Math.cos( time / 7000 ) * 20 + 40;
+            windForce.set( Math.sin( time / 2000 ), Math.cos( time / 3000 ), Math.sin( time / 1000 ) ).normalize().multiplyScalar( windStrength );
+
+
+            //模拟风向，拉力等等
+            simulate();
+
+            render();
+        }
+        function render(){
+            renderer.render(scene,camera);
+
+            //将衣服粒子上的所有点给予到clothGeomtry上
+            for(let i = 0 ; i < clothGeomtry.vertices.length ; i++){
+                clothGeomtry.vertices[i].copy(cloth.particles[i].position);
+            }
+            clothGeomtry.computeFaceNormals();
+            clothGeomtry.computeVertexNormals();
+            clothGeomtry.normalsNeedUpdate = true;
+            clothGeomtry.verticesNeedUpdate = true;
+
+
+            camera.lookAt( scene.position );
+            controls.update();
+
+            water.material.uniforms.time.value += 1.0 / 60.0;
+            water.render();
+        }
+
+        var pinsFormation = [];
+        var pins = [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ];
+        pinsFormation.push( pins );
+
+        pins = [ 0 ];
+        pinsFormation.push( pins );
+        pins = [ 0 , cloth.w];
+        pinsFormation.push( pins );
+        pins = pinsFormation[0];
+
+        document.addEventListener('keydown' , function(e){
+            if(e.keyCode === 87){
+                pins = pinsFormation[ parseInt(Math.random()*(pinsFormation.length))];
+            }
+        });
+        init();
+
+    </script>
+</body>
+</html>
